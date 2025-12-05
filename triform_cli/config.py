@@ -41,6 +41,7 @@ class ProjectConfig:
     project_id: str
     project_name: str
     organization_id: Optional[str] = None
+    organization_name: Optional[str] = None
     
     @classmethod
     def load(cls, project_dir: Path) -> Optional["ProjectConfig"]:
@@ -49,6 +50,9 @@ class ProjectConfig:
         if config_file.exists():
             try:
                 data = json.loads(config_file.read_text())
+                # Handle old configs without organization_name
+                if "organization_name" not in data:
+                    data["organization_name"] = None
                 return cls(**data)
             except (json.JSONDecodeError, TypeError):
                 pass

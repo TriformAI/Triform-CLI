@@ -102,6 +102,48 @@ def auth_status():
         console.print(f"[red]✗ Error: {e}[/]")
 
 
+@auth.command("whoami")
+def auth_whoami():
+    """Show current user and organization info."""
+    api = TriformAPI()
+    
+    try:
+        memberships = api.get_memberships()
+        
+        if not memberships:
+            console.print("[yellow]No organization memberships found[/]")
+            return
+        
+        console.print(Panel("[bold]Organization Memberships[/]"))
+        
+        table = Table()
+        table.add_column("Organization", style="cyan")
+        table.add_column("Role")
+        table.add_column("Status")
+        
+        for m in memberships:
+            org = m.get("organization", {})
+            member = m.get("member", {})
+            
+            org_name = org.get("name", "Unknown")
+            role = member.get("role", "member")
+            
+            # We can't easily determine which is "active" from this endpoint
+            # but we can show all memberships
+            table.add_row(
+                org_name,
+                role,
+                "[dim]member[/]"
+            )
+        
+        console.print(table)
+        console.print("\n[dim]Note: Switch organizations in the Triform UI, then re-copy your session token with 'triform auth login'[/]")
+        
+    except APIError as e:
+        console.print(f"[red]Error: {e}[/]")
+        sys.exit(1)
+
+
 # ----- Projects Commands -----
 
 @cli.group()
@@ -116,16 +158,34 @@ def projects_list():
     api = TriformAPI()
     
     try:
+        # Get memberships to determine active org
+        memberships = api.get_memberships()
         projects = api.list_projects()
     except APIError as e:
         console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
     
+    # Try to determine active org from memberships or projects
+    org_name = None
+    if memberships:
+        # Show first org as hint (actual active org determined by session)
+        for m in memberships:
+            org = m.get("organization", {})
+            if org.get("name"):
+                org_name = org.get("name")
+                break
+    
     if not projects:
         console.print("[yellow]No projects found[/]")
+        if org_name:
+            console.print(f"[dim]Current organization context may be: {org_name}[/]")
         return
     
-    table = Table(title="Projects")
+    title = "Projects"
+    if org_name and len(memberships) > 1:
+        title = f"Projects [dim](showing {len(projects)} from current org)[/]"
+    
+    table = Table(title=title)
     table.add_column("ID", style="dim")
     table.add_column("Name", style="cyan")
     table.add_column("Description")
@@ -142,12 +202,20 @@ def projects_list():
 
 @projects.command("pull")
 @click.argument("project_id")
-@click.option("--dir", "-d", "target_dir", help="Target directory")
-def projects_pull(project_id: str, target_dir: Optional[str]):
-    """Pull a project to local files."""
+@click.option("--dir", "-d", "target_dir", help="Target directory (overrides default structure)")
+@click.option("--flat", is_flag=True, help="Skip Triform/Org structure, just create project dir")
+def projects_pull(project_id: str, target_dir: Optional[str], flat: bool):
+    """Pull a project to local files.
+    
+    Default structure: Triform/OrgName/ProjectName/
+    With --flat: ProjectName/
+    With --dir: Specified directory
+    """
     try:
         target = Path(target_dir) if target_dir else None
-        result_dir = pull_project(project_id, target)
+        # If explicit dir given, don't use org structure
+        include_org = not flat and target is None
+        result_dir = pull_project(project_id, target, include_org_structure=include_org)
         console.print(f"\n[green]✓ Project pulled to {result_dir}[/]")
     except APIError as e:
         console.print(f"[red]Error: {e}[/]")
@@ -209,6 +277,85 @@ def projects_deploy(project_dir: Optional[str]):
         console.print(f"[green]✓ Deployed successfully![/]")
         console.print(f"  Deployment ID: {result.get('id', 'N/A')}")
         console.print(f"  Checksum: {result.get('checksum', 'N/A')[:16]}...")
+    except APIError as e:
+        console.print(f"[red]Error: {e}[/]")
+        sys.exit(1)
+
+
+@projects.command("restore")
+@click.argument("project_id")
+@click.option("--from-local", "-l", "local_dir", help="Restore from local .triform state")
+def projects_restore(project_id: str, local_dir: Optional[str]):
+    """Restore a project's nodes from local sync state."""
+    api = TriformAPI()
+    
+    try:
+        # Get the current project
+        console.print(f"Fetching project {project_id}...")
+        project = api.get_project(project_id)
+        console.print(f"  Current project: {project['meta']['name']}")
+        console.print(f"  Current nodes: {len(project['spec'].get('nodes', {}))}")
+        
+        # Try to restore from local state
+        if local_dir:
+            target = Path(local_dir)
+        else:
+            # Try current directory
+            target = Path.cwd()
+        
+        sync_state = SyncState.load(target)
+        
+        if not sync_state.components:
+            console.print("[yellow]No local sync state found[/]")
+            console.print("  Looking for components we can add back...")
+            
+            # List all components owned by this org
+            all_components = api.list_components()
+            console.print(f"  Found {len(all_components)} components in your account")
+            
+            # Show them so user can manually restore
+            for comp in all_components[:20]:
+                console.print(f"    - {comp['id'][:8]}... : {comp['meta']['name']} ({comp['resource']})")
+            
+            console.print("\n[yellow]To restore, you'll need to manually add components back via the Triform UI[/]")
+            console.print("  Or provide a local project directory with --from-local")
+            return
+        
+        console.print(f"\nFound {len(sync_state.components)} components in local state:")
+        
+        # Build nodes from sync state
+        nodes_to_restore = {}
+        for node_key, state in sync_state.components.items():
+            component_id = state.get("component_id")
+            comp_type = state.get("type")
+            comp_dir = state.get("dir")
+            console.print(f"  - {node_key[:20]}... : {comp_type} ({comp_dir})")
+            
+            nodes_to_restore[node_key] = {
+                "component_id": component_id,
+                "order": len(nodes_to_restore)  # Simple ordering
+            }
+        
+        if not click.confirm(f"\nRestore project with {len(nodes_to_restore)} nodes?"):
+            console.print("Aborted")
+            return
+        
+        # Get current spec to preserve other fields
+        current_spec = project.get("spec", {})
+        
+        # Build new spec with restored nodes
+        new_spec = {
+            "nodes": nodes_to_restore,
+            "readme": current_spec.get("readme", ""),
+            "modifiers": current_spec.get("modifiers", {}),
+            "environment": current_spec.get("environment", {"variables": []}),
+            "triggers": current_spec.get("triggers", {"endpoints": {}, "scheduled": {}})
+        }
+        
+        api.update_project(project_id, spec=new_spec)
+        console.print("[green]✓ Project restored successfully![/]")
+        console.print(f"  Restored {len(nodes_to_restore)} nodes")
+        
     except APIError as e:
         console.print(f"[red]Error: {e}[/]")
         sys.exit(1)
@@ -335,11 +482,17 @@ def execute(target: str, payload: Optional[str], trace: bool, project_dir: Optio
             # Get environment from project
             environment = project["spec"].get("environment", {}).get("variables", [])
             
+            # Get modifiers relevant to this node
+            all_modifiers = project["spec"].get("modifiers", {})
+            modifiers = {k: v for k, v in all_modifiers.items() if k.startswith(node_key)}
+            if modifiers:
+                console.print(f"[dim]📎 Found {len(modifiers)} modifier mapping(s)[/]")
+            
             if trace:
-                events = execute_component(component_id, payload_dict, environment, trace=True, api=api)
+                events = execute_component(component_id, payload_dict, environment, modifiers, trace=True, api=api)
                 result = print_execution_events(events)
             else:
-                result = execute_component(component_id, payload_dict, environment, api=api)
+                result = execute_component(component_id, payload_dict, environment, modifiers, api=api)
                 console.print(Syntax(json.dumps(result, indent=2), "json"))
         
         elif project_dir or ProjectConfig.load(Path.cwd()):

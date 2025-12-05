@@ -60,19 +60,20 @@ class TriformAPI:
         req = urllib.request.Request(url, data=body, headers=headers, method=method)
         
         try:
-            with urllib.request.urlopen(req, context=self._ssl_context, timeout=60) as response:
+            with urllib.request.urlopen(req, context=self._ssl_context, timeout=300) as response:
                 response_data = response.read().decode()
                 if response_data:
                     return json.loads(response_data)
                 return None
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else ""
+            error_data = None
             try:
                 error_data = json.loads(error_body)
                 message = error_data.get("error", error_body)
             except json.JSONDecodeError:
                 message = error_body or str(e)
-            raise APIError(e.code, message, error_data if error_body else None)
+            raise APIError(e.code, message, error_data)
         except urllib.error.URLError as e:
             raise APIError(0, f"Network error: {e.reason}")
     
@@ -121,6 +122,15 @@ class TriformAPI:
         """Get project deployments."""
         response = self._make_request("GET", f"/projects/{project_id}/deployments")
         return response.get("data", [])
+    
+    def get_deployment_spec(self, project_id: str) -> dict:
+        """Get the full spec from the latest active deployment."""
+        # The deployments endpoint returns limited data, we need to query the deployed_projects table
+        # For now, return what we can get from deployments
+        deployments = self.get_deployments(project_id)
+        if deployments:
+            return deployments[0]  # Most recent
+        return {}
     
     def get_project_requirements(self, project_id: str) -> dict:
         """Get project requirements."""
@@ -189,6 +199,13 @@ class TriformAPI:
         response = self._make_request("GET", f"/components/{component_id}/mock/inputs")
         return response.get("data", {})
     
+    # ----- Users / Organizations -----
+    
+    def get_memberships(self) -> list[dict]:
+        """Get current user's organization memberships."""
+        response = self._make_request("GET", "/users/@me/memberships")
+        return response.get("data", [])
+    
     # ----- Execution -----
     
     def execute_run(self, execution: dict) -> dict:
@@ -205,7 +222,8 @@ class TriformAPI:
         headers = {
             "Content-Type": "application/json",
             "Cookie": f"__Secure-better-auth.session_token={self.config.auth_token}",
-            "Accept": "text/event-stream"
+            "Accept": "text/event-stream",
+            "Cache-Control": "no-cache"
         }
         
         body = json.dumps(execution).encode()
@@ -214,18 +232,33 @@ class TriformAPI:
         try:
             with urllib.request.urlopen(req, context=self._ssl_context, timeout=600) as response:
                 buffer = ""
+                # Read in chunks for chunked transfer encoding
                 while True:
-                    chunk = response.read(1024)
-                    if not chunk:
+                    try:
+                        chunk = response.read(4096)
+                        if not chunk:
+                            # End of stream - process any remaining buffer
+                            if buffer.strip():
+                                event = self._parse_sse_event(buffer)
+                                if event:
+                                    yield event
+                            break
+                        
+                        buffer += chunk.decode('utf-8', errors='replace')
+                        
+                        # Parse SSE events (separated by double newlines)
+                        while "\n\n" in buffer:
+                            event_str, buffer = buffer.split("\n\n", 1)
+                            event = self._parse_sse_event(event_str)
+                            if event:
+                                yield event
+                    except Exception as read_err:
+                        # Try to yield any remaining buffered event
+                        if buffer.strip():
+                            event = self._parse_sse_event(buffer)
+                            if event:
+                                yield event
                         break
-                    buffer += chunk.decode()
-                    
-                    # Parse SSE events
-                    while "\n\n" in buffer:
-                        event_str, buffer = buffer.split("\n\n", 1)
-                        event = self._parse_sse_event(event_str)
-                        if event:
-                            yield event
         except urllib.error.HTTPError as e:
             error_body = e.read().decode() if e.fp else ""
             raise APIError(e.code, error_body or str(e))

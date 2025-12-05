@@ -1,11 +1,17 @@
 """Execute Triform components."""
 
 import json
+import sys
 from pathlib import Path
 from typing import Optional, Generator
 
 from ..api import TriformAPI, APIError
 from ..config import ProjectConfig, SyncState
+
+
+def _print(msg: str):
+    """Print with immediate flush."""
+    print(msg, flush=True)
 
 
 def build_execution_payload(
@@ -21,7 +27,7 @@ def build_execution_payload(
         component: Resolved component dict
         payload: Input values
         environment: Optional environment variables
-        modifiers: Optional modifiers
+        modifiers: Optional modifiers (node_path -> [{modifier_id, spec}])
     
     Returns:
         Execution payload dict
@@ -40,10 +46,36 @@ def build_execution_payload(
     }
 
 
+def get_project_modifiers(project: dict, node_key: str) -> dict:
+    """
+    Extract modifiers relevant to a node from project spec.
+    
+    Modifiers are mapped by path like "node_key/child_node_key".
+    We need to include any modifiers that start with our node_key.
+    
+    Args:
+        project: Project dict with spec.modifiers
+        node_key: The node key we're executing
+    
+    Returns:
+        Filtered modifiers dict
+    """
+    all_modifiers = project.get("spec", {}).get("modifiers", {})
+    relevant_modifiers = {}
+    
+    for path, mods in all_modifiers.items():
+        # Include modifiers for this node or its children
+        if path.startswith(node_key):
+            relevant_modifiers[path] = mods
+    
+    return relevant_modifiers
+
+
 def execute_component(
     component_id: str,
     payload: Optional[dict] = None,
     environment: Optional[list[dict]] = None,
+    modifiers: Optional[dict] = None,
     trace: bool = False,
     api: Optional[TriformAPI] = None
 ) -> dict | Generator[dict, None, None]:
@@ -54,6 +86,7 @@ def execute_component(
         component_id: The component ID to execute
         payload: Input values
         environment: Optional environment variables
+        modifiers: Optional modifiers mapping
         trace: If True, stream execution events
         api: Optional API client instance
     
@@ -70,7 +103,7 @@ def execute_component(
         raise ValueError(f"Component {component_id} not found")
     
     # Build execution payload
-    execution = build_execution_payload(component, payload, environment)
+    execution = build_execution_payload(component, payload, environment, modifiers)
     
     if trace:
         return api.execute_trace(execution)
@@ -111,6 +144,8 @@ def execute_from_project(
     # Load sync state
     sync_state = SyncState.load(project_dir)
     
+    original_node_key = node_key
+    
     # Find component by node key
     if node_key not in sync_state.components:
         # Try to find by directory name
@@ -120,73 +155,138 @@ def execute_from_project(
                 node_key = key
                 break
         else:
-            raise ValueError(f"Component '{node_key}' not found in project")
+            raise ValueError(f"Component '{original_node_key}' not found in project")
     
     component_id = sync_state.components[node_key]["component_id"]
     
-    # Load environment from project.json
-    project_file = project_dir / "project.json"
-    environment = []
-    if project_file.exists():
-        try:
-            project_data = json.loads(project_file.read_text())
-            environment = project_data.get("environment", {}).get("variables", [])
-        except (json.JSONDecodeError, KeyError):
-            pass
+    # Fetch the full project to get environment and modifiers
+    project = api.get_project(project_config.project_id)
+    environment = project.get("spec", {}).get("environment", {}).get("variables", [])
+    
+    # Get modifiers relevant to this node
+    modifiers = get_project_modifiers(project, node_key)
+    if modifiers:
+        _print(f"📎 Found {len(modifiers)} modifier mapping(s) for this component")
     
     return execute_component(
         component_id,
         payload=payload,
         environment=environment,
+        modifiers=modifiers,
         trace=trace,
         api=api
     )
 
 
-def print_execution_events(events: Generator[dict, None, None]) -> dict:
+def print_execution_events(events: Generator[dict, None, None], verbose: bool = True) -> dict:
     """
     Print execution events as they arrive and return final result.
     
     Args:
         events: Generator of execution events
+        verbose: If True, show full payloads/outputs
     
     Returns:
         Final result dict
     """
     last_result = {}
+    event_count = 0
+    
+    def get_indent(path: list) -> str:
+        """Get indentation based on path depth."""
+        return "  " * len(path)
+    
+    def format_component_name(path: list) -> str:
+        """Format component name from path."""
+        if not path:
+            return "root"
+        # Extract meaningful name from path element
+        name = path[-1]
+        # Tool calls often have format "node_id:tool_xxx" - extract the tool part
+        if ":tool_" in name:
+            return name.split(":")[0][:12] + " (tool)"
+        return name[:30] if len(name) > 30 else name
+    
+    def truncate(s: str, max_len: int = 200) -> str:
+        """Truncate string for display."""
+        if len(s) <= max_len:
+            return s
+        return s[:max_len] + "..."
+    
+    _print("📡 Streaming execution events...\n")
     
     for event in events:
+        event_count += 1
         event_type = event.get("event", "unknown")
         path = event.get("path", [])
-        path_str = " > ".join(path) if path else "root"
+        indent = get_indent(path)
+        component = format_component_name(path)
+        depth = len(path)
         
         if event_type == "running":
-            print(f"🏃 Running: {path_str}")
-            if event.get("payload"):
-                print(f"   Payload: {json.dumps(event['payload'], indent=2)}")
+            # Highlight tool/action calls
+            if depth > 0:
+                _print(f"{indent}🔧 Calling: {component}")
+            else:
+                _print(f"🚀 Starting execution: {component}")
+            
+            payload = event.get("payload", {})
+            if verbose and payload:
+                # Show key inputs without overwhelming output
+                for key, value in list(payload.items())[:3]:
+                    value_str = json.dumps(value) if not isinstance(value, str) else value
+                    _print(f"{indent}   📥 {key}: {truncate(value_str, 80)}")
+                if len(payload) > 3:
+                    _print(f"{indent}   ... and {len(payload) - 3} more inputs")
         
         elif event_type == "completed":
-            print(f"✅ Completed: {path_str}")
             output = event.get("output", {})
-            if output:
-                print(f"   Output: {json.dumps(output, indent=2)}")
+            
+            if depth > 0:
+                _print(f"{indent}✅ {component} completed")
+            else:
+                _print(f"\n✅ Execution completed")
+            
+            if verbose and output:
+                # Show key outputs
+                if isinstance(output, dict):
+                    for key, value in list(output.items())[:3]:
+                        value_str = json.dumps(value) if not isinstance(value, str) else value
+                        _print(f"{indent}   📤 {key}: {truncate(value_str, 120)}")
+                    if len(output) > 3:
+                        _print(f"{indent}   ... and {len(output) - 3} more outputs")
+                else:
+                    _print(f"{indent}   📤 {truncate(str(output), 200)}")
+            
             last_result = output
         
         elif event_type == "failed":
-            print(f"❌ Failed: {path_str}")
+            if depth > 0:
+                _print(f"{indent}❌ {component} FAILED")
+            else:
+                _print(f"\n❌ Execution FAILED")
+            
             output = event.get("output", {})
             if output:
-                print(f"   Error: {json.dumps(output, indent=2)}")
+                error_msg = output.get("message") or output.get("error") or str(output)
+                _print(f"{indent}   Error: {truncate(str(error_msg), 300)}")
+            
             stderr = event.get("stderr")
             if stderr:
-                print(f"   Stderr: {stderr}")
+                _print(f"{indent}   Stderr: {truncate(stderr, 200)}")
+            
             stacktrace = event.get("stacktrace")
-            if stacktrace:
-                print(f"   Stacktrace:\n{stacktrace}")
+            if stacktrace and verbose:
+                lines = stacktrace.strip().split('\n')
+                _print(f"{indent}   Stacktrace (last 3 lines):")
+                for line in lines[-3:]:
+                    _print(f"{indent}     {line}")
+            
             last_result = {"error": output, "stderr": stderr, "stacktrace": stacktrace}
         
         else:
-            print(f"📝 {event_type}: {path_str}")
+            _print(f"{indent}📝 {event_type}: {component}")
     
+    _print(f"\n📊 Total events: {event_count}")
     return last_result
 

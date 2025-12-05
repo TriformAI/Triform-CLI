@@ -194,6 +194,9 @@ def push_project(
     }
     
     # Update project.json if changed
+    # NOTE: We only update meta (name, intention), NOT spec
+    # Updating spec would overwrite nodes, triggers, etc.
+    # Environment should be managed via Triform UI or a separate command
     project_file = project_dir / "project.json"
     if project_file.exists():
         project_data = json.loads(project_file.read_text())
@@ -202,16 +205,10 @@ def push_project(
                 "name": project_data.get("name", project_config.project_name),
                 "intention": project_data.get("intention", "")
             }
-            spec_update = {}
-            if "readme" in project_data:
-                spec_update["readme"] = project_data["readme"]
-            if "environment" in project_data:
-                spec_update["environment"] = project_data["environment"]
-            
-            if meta or spec_update:
-                api.update_project(project_id, meta=meta, spec=spec_update if spec_update else None)
-                results["updated"].append("project.json")
-                print("  Updated project metadata")
+            # Only update meta, never spec (to avoid wiping nodes)
+            api.update_project(project_id, meta=meta, spec=None)
+            results["updated"].append("project.json (meta only)")
+            print("  Updated project metadata (name, intention)")
         except APIError as e:
             results["errors"].append(f"project.json: {e}")
             print(f"  Error updating project: {e}")

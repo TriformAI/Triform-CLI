@@ -29,6 +29,14 @@ dependencies = [
     "pydantic>=2.0",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+    "build>=1.0",
+    "twine>=4.0",
+]
+
 [project.scripts]
 triform = "triform_cli.cli:main"
 
