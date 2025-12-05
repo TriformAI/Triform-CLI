@@ -577,31 +577,35 @@ def diff_cmd(project_dir: Optional[str]):
 
     sync_state = SyncState.load(target)
 
-    # Import here to avoid circular
-    from .sync.push import read_action, read_agent, read_flow
+    from .sync.push import read_component_folder, find_all_components
 
     changes = []
 
-    # Check each tracked component
-    for node_key, state in sync_state.components.items():
-        comp_type = state.get("type")
-        comp_dir = target / state.get("dir", "")
-
-        if not comp_dir.exists():
-            changes.append((node_key, comp_type, "deleted"))
-            continue
-
-        if comp_type == "action":
-            _, _, checksum = read_action(comp_dir)
-        elif comp_type == "flow":
-            _, _, checksum = read_flow(comp_dir)
-        elif comp_type == "agent":
-            _, _, checksum = read_agent(comp_dir)
-        else:
-            continue
-
-        if checksum != state.get("checksum"):
-            changes.append((node_key, comp_type, "modified"))
+    # Find all components (new granular structure with meta.json files)
+    components = find_all_components(target)
+    
+    if components:
+        # Build checksum map from sync state
+        checksum_map = {}
+        for node_key, state in sync_state.components.items():
+            checksum_map[state.get("component_id")] = (node_key, state.get("checksum"), state.get("type"))
+        
+        for comp_path, component_id, comp_type in components:
+            rel_path = str(comp_path.relative_to(target))
+            
+            if component_id not in checksum_map:
+                changes.append((rel_path, comp_type, "untracked"))
+                continue
+            
+            node_key, stored_checksum, _ = checksum_map[component_id]
+            _, _, current_checksum, _ = read_component_folder(comp_path)
+            
+            if current_checksum != stored_checksum:
+                changes.append((rel_path, comp_type, "modified"))
+    else:
+        # No components found
+        console.print("[yellow]No components found in project[/]")
+        return
 
     if not changes:
         console.print("[green]✓ No changes detected[/]")
@@ -612,9 +616,9 @@ def diff_cmd(project_dir: Optional[str]):
     table.add_column("Type")
     table.add_column("Status")
 
-    for node_key, comp_type, status in changes:
-        status_color = {"modified": "yellow", "deleted": "red"}.get(status, "white")
-        table.add_row(node_key, comp_type, f"[{status_color}]{status}[/]")
+    for name, comp_type, status in changes:
+        status_color = {"modified": "yellow", "deleted": "red", "untracked": "blue"}.get(status, "white")
+        table.add_row(name, comp_type, f"[{status_color}]{status}[/]")
 
     console.print(table)
 

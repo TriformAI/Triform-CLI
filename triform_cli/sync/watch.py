@@ -29,41 +29,37 @@ class FileWatcher:
         """Get list of files to watch."""
         files = []
 
-        # Project files
-        for name in ["project.json", "requirements.json"]:
-            f = self.project_dir / name
-            if f.exists():
-                files.append(f)
+        # Project-level files
+        for pattern in ["*.env", "readme.md", "requirements.json"]:
+            files.extend(self.project_dir.glob(pattern))
 
-        # Action files
-        actions_dir = self.project_dir / "actions"
-        if actions_dir.exists():
-            for action_dir in actions_dir.iterdir():
-                if action_dir.is_dir():
-                    for name in ["source.py", "requirements.txt", "readme.md", "meta.json"]:
-                        f = action_dir / name
-                        if f.exists():
-                            files.append(f)
+        # Triggers folder
+        triggers_dir = self.project_dir / "triggers"
+        if triggers_dir.exists():
+            files.extend(triggers_dir.glob("*.json"))
 
-        # Flow files
-        flows_dir = self.project_dir / "flows"
-        if flows_dir.exists():
-            for flow_dir in flows_dir.iterdir():
-                if flow_dir.is_dir():
-                    for name in ["flow.json", "readme.md", "meta.json"]:
-                        f = flow_dir / name
-                        if f.exists():
-                            files.append(f)
-
-        # Agent files
-        agents_dir = self.project_dir / "agents"
-        if agents_dir.exists():
-            for agent_dir in agents_dir.iterdir():
-                if agent_dir.is_dir():
-                    for name in ["agent.json", "readme.md", "meta.json"]:
-                        f = agent_dir / name
-                        if f.exists():
-                            files.append(f)
+        # Component files - find all meta.json and track their sibling files
+        for meta_file in self.project_dir.rglob("meta.json"):
+            if ".triform" in str(meta_file):
+                continue
+            
+            component_dir = meta_file.parent
+            files.append(meta_file)
+            
+            # Track all relevant component files
+            for pattern in [
+                "*.py",           # Source code
+                "readme.md",
+                "requirements.json",
+                "pip_requirements.txt",
+                "io.json",
+                "nodes.json",
+                "io_nodes.json",
+                "prompts.json",
+                "settings.json",
+                "modifiers.json"
+            ]:
+                files.extend(component_dir.glob(pattern))
 
         return files
 
@@ -118,7 +114,6 @@ class FileWatcher:
                 if self._check_changes():
                     current_time = time.time()
 
-                    # Debounce - wait for debounce period after last change
                     if current_time - self._last_sync_time >= self.debounce_seconds:
                         self._do_sync()
                         self._last_sync_time = current_time
@@ -145,4 +140,3 @@ def watch_project(
     project_dir = Path(project_dir) if project_dir else Path.cwd()
     watcher = FileWatcher(project_dir, api)
     watcher.watch()
-
