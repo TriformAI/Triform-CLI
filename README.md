@@ -1,2 +1,2 @@
 # Triform-CLI
-A triform CLI integration tool
+A Triform CLI integration tool
