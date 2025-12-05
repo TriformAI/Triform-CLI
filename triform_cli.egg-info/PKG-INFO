@@ -24,6 +24,11 @@ License-File: LICENSE
 Requires-Dist: click>=8.0
 Requires-Dist: rich>=13.0
 Requires-Dist: pydantic>=2.0
+Provides-Extra: dev
+Requires-Dist: ruff>=0.1.0; extra == "dev"
+Requires-Dist: mypy>=1.0; extra == "dev"
+Requires-Dist: build>=1.0; extra == "dev"
+Requires-Dist: twine>=4.0; extra == "dev"
 Dynamic: author
 Dynamic: home-page
 Dynamic: license-file
@@ -35,14 +40,30 @@ A command-line tool to sync and execute Triform projects locally. Perfect for in
 
 ## Installation
 
+### From PyPI (Recommended)
+
 ```bash
-pip install -e .
+pip install triform-cli
 ```
 
-Or install dependencies directly:
+Or using pipx (isolated environment):
 
 ```bash
-pip install click rich pydantic
+pipx install triform-cli
+```
+
+### From GitHub
+
+```bash
+pip install git+https://github.com/triform/triform-cli.git
+```
+
+### Development Install
+
+```bash
+git clone https://github.com/triform/triform-cli.git
+cd triform-cli
+pip install -e ".[dev]"
 ```
 
 ## Quick Start
@@ -73,29 +94,38 @@ triform projects pull <project-id>
 This creates a local directory structure:
 
 ```
-my-project/
-├── .triform/
-│   ├── config.json         # Project ID mapping
-│   └── state.json          # Sync state
-├── project.json            # Project metadata & environment
-├── requirements.json       # Project requirements
-├── actions/
-│   └── my-action/
-│       ├── source.py       # Action code
-│       ├── meta.json       # Component metadata
-│       ├── requirements.txt
-│       └── readme.md
-├── flows/
-│   └── my-flow/
-│       ├── flow.json       # Flow definition
-│       ├── meta.json
-│       └── readme.md
-└── agents/
-    └── my-agent/
-        ├── agent.json      # Agent configuration
-        ├── meta.json
-        └── readme.md
+Triform/                        # Root directory
+└── OrgName/                    # Organization
+    └── my-project/             # Project
+        ├── .triform/
+        │   ├── config.json     # Project & org ID mapping
+        │   └── state.json      # Sync state
+        ├── project.json        # Project metadata & environment
+        ├── requirements.json   # Project requirements
+        ├── actions/
+        │   └── my-action/
+        │       ├── source.py       # Action code
+        │       ├── meta.json       # Component metadata
+        │       ├── requirements.txt
+        │       ├── requirements.json  # Component requirements
+        │       └── readme.md
+        ├── flows/
+        │   └── my-flow/
+        │       ├── flow.json       # Flow definition
+        │       ├── meta.json
+        │       ├── requirements.json
+        │       └── readme.md
+        └── agents/
+            └── my-agent/
+                ├── agent.json      # Agent configuration
+                ├── meta.json
+                ├── requirements.json
+                └── readme.md
 ```
+
+Options:
+- `--flat` - Skip the `Triform/Org` structure
+- `--dir <path>` - Specify a custom directory
 
 ### 3. Edit Locally
 
@@ -135,6 +165,7 @@ triform execute <project-id>/my-action --payload '{}'
 triform auth login              # Login with session token
 triform auth logout             # Clear authentication
 triform auth status             # Check auth status
+triform auth whoami             # Show user & organization info
 ```
 
 ### Projects
