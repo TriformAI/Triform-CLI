@@ -1,8 +1,8 @@
 """Pydantic models matching Triform API schemas."""
 
-from typing import Optional, Literal, Any
-from pydantic import BaseModel, Field
+from typing import Any, Literal, Optional
 
+from pydantic import BaseModel, Field
 
 # ----- Common Models -----
 
@@ -15,7 +15,7 @@ class ComponentMeta(BaseModel):
 class IOPort(BaseModel):
     description: str = ""
     schema_: dict = Field(default_factory=dict, alias="schema")
-    
+
     class Config:
         populate_by_name = True
 
@@ -64,7 +64,7 @@ class FlowOutput(BaseModel):
     schema_: dict = Field(default_factory=dict, alias="schema")
     source: Optional[str] = None
     target: Optional[str] = None
-    
+
     class Config:
         populate_by_name = True
 

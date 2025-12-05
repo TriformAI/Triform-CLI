@@ -1,11 +1,9 @@
 """Configuration management for Triform CLI."""
 
 import json
-import os
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Optional
-from dataclasses import dataclass, asdict
-
 
 # Global config directory
 CONFIG_DIR = Path.home() / ".triform"
@@ -17,12 +15,12 @@ class Config:
     """Global CLI configuration."""
     auth_token: Optional[str] = None
     api_base_url: str = "https://app.triform.ai/api"
-    
+
     def save(self) -> None:
         """Save config to disk."""
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         CONFIG_FILE.write_text(json.dumps(asdict(self), indent=2))
-    
+
     @classmethod
     def load(cls) -> "Config":
         """Load config from disk."""
@@ -42,7 +40,7 @@ class ProjectConfig:
     project_name: str
     organization_id: Optional[str] = None
     organization_name: Optional[str] = None
-    
+
     @classmethod
     def load(cls, project_dir: Path) -> Optional["ProjectConfig"]:
         """Load project config from .triform directory."""
@@ -57,7 +55,7 @@ class ProjectConfig:
             except (json.JSONDecodeError, TypeError):
                 pass
         return None
-    
+
     def save(self, project_dir: Path) -> None:
         """Save project config to .triform directory."""
         triform_dir = project_dir / ".triform"
@@ -71,7 +69,7 @@ class SyncState:
     """Sync state tracking component IDs and checksums."""
     components: dict  # node_key -> {component_id, checksum, type}
     last_sync: Optional[str] = None
-    
+
     @classmethod
     def load(cls, project_dir: Path) -> "SyncState":
         """Load sync state from .triform directory."""
@@ -83,7 +81,7 @@ class SyncState:
             except (json.JSONDecodeError, TypeError):
                 pass
         return cls(components={})
-    
+
     def save(self, project_dir: Path) -> None:
         """Save sync state to .triform directory."""
         triform_dir = project_dir / ".triform"
