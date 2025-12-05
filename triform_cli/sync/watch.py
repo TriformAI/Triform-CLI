@@ -38,13 +38,13 @@ class FileWatcher:
         if triggers_dir.exists():
             files.extend(triggers_dir.glob("*.json"))
 
-        # Component files - find all meta.json and track their sibling files
-        for meta_file in self.project_dir.rglob("meta.json"):
-            if ".triform" in str(meta_file):
+        # Component files - find all .triform.json and track their sibling files
+        for triform_file in self.project_dir.rglob(".triform.json"):
+            if "/.triform/" in str(triform_file):
                 continue
             
-            component_dir = meta_file.parent
-            files.append(meta_file)
+            component_dir = triform_file.parent
+            files.append(triform_file)
             
             # Track all relevant component files
             for pattern in [
@@ -57,7 +57,8 @@ class FileWatcher:
                 "io_nodes.json",
                 "prompts.json",
                 "settings.json",
-                "modifiers.json"
+                "modifiers.json",
+                ".triform.json"   # Component tracking
             ]:
                 files.extend(component_dir.glob(pattern))
 

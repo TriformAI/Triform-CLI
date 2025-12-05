@@ -223,15 +223,25 @@ def projects_pull(project_id: str, target_dir: Optional[str], flat: bool):
 
 @projects.command("push")
 @click.option("--force", "-f", is_flag=True, help="Force push all files")
+@click.option("--create-new", "-c", is_flag=True, help="Create new components that don't exist in Triform")
 @click.option("--dir", "-d", "project_dir", help="Project directory")
-def projects_push(force: bool, project_dir: Optional[str]):
-    """Push local changes to Triform."""
+def projects_push(force: bool, create_new: bool, project_dir: Optional[str]):
+    """Push local changes to Triform.
+    
+    Components are tracked via .triform.json files in each folder.
+    
+    \b
+    - Existing components (with .triform.json) are updated
+    - New components (without .triform.json) are created when --create-new is used
+    """
     try:
         target = Path(project_dir) if project_dir else None
-        results = push_project(target, force=force)
+        results = push_project(target, force=force, create_new=create_new)
 
         if results["errors"]:
             console.print(f"\n[yellow]⚠ Completed with {len(results['errors'])} errors[/]")
+        elif results.get("new_components"):
+            console.print(f"\n[yellow]⚠ Some new components were not created. Use --create-new to create them.[/]")
         else:
             console.print("\n[green]✓ Push complete[/]")
     except APIError as e:

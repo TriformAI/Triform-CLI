@@ -55,7 +55,6 @@ def build_requirements_json(requirements: dict, description: str = "") -> dict:
     if description:
         result["description"] = description
     
-    # Only include non-empty sections
     for key in ["context", "userStories", "outcomes", "guidelines", "dependencies", "boundaries", "safety"]:
         if requirements.get(key):
             result[key] = requirements[key]
@@ -96,6 +95,18 @@ def generate_env_file(environment: dict) -> str:
     return "\n".join(lines)
 
 
+def write_triform_json(component_dir: Path, component_id: str, resource_type: str, node_key: str = "") -> None:
+    """Write .triform.json file for component tracking."""
+    triform_file = component_dir / ".triform.json"
+    data = {
+        "id": component_id,
+        "type": resource_type.split("/")[0] if "/" in resource_type else resource_type
+    }
+    if node_key:
+        data["node_key"] = node_key
+    triform_file.write_text(json.dumps(data, indent=2))
+
+
 # Global tracking for node_key -> folder path mapping (used for modifier distribution)
 _node_folder_map: dict[str, Path] = {}
 
@@ -112,19 +123,21 @@ def write_action_folder(
     meta = component.get("meta", {})
     spec = component.get("spec", {})
     component_id = component.get("id", "")
+    resource = component.get("resource", "action/v1")
     name = meta.get("name", "unnamed")
     
-    # Create folder
     dir_name = get_unique_dir_name(parent_dir, name, existing_dirs)
     component_dir = parent_dir / dir_name
     component_dir.mkdir(parents=True, exist_ok=True)
     
-    # Track node key -> folder mapping for modifiers
     if node_key:
         _node_folder_map[node_key] = component_dir
     
     indent = "  " * depth
     print(f"{indent}Writing action: {dir_name}/")
+    
+    # Write .triform.json for tracking
+    write_triform_json(component_dir, component_id, resource, node_key)
     
     # Write source code as {name}.py
     source = spec.get("source", "")
@@ -133,7 +146,7 @@ def write_action_folder(
         source_file = component_dir / py_filename
         source_file.write_text(source)
     
-    # Write pip requirements as requirements.txt (if any)
+    # Write pip requirements
     pip_requirements = spec.get("requirements", "")
     if pip_requirements.strip():
         pip_file = component_dir / "pip_requirements.txt"
@@ -146,7 +159,7 @@ def write_action_folder(
     readme_file = component_dir / "readme.md"
     readme_file.write_text(readme)
     
-    # Write io.json (inputs and outputs)
+    # Write io.json
     inputs = spec.get("inputs", {})
     outputs = spec.get("outputs", {})
     if inputs or outputs:
@@ -158,7 +171,7 @@ def write_action_folder(
         io_file = component_dir / "io.json"
         io_file.write_text(json.dumps(io_data, indent=2))
     
-    # Fetch and write requirements.json (with description)
+    # Fetch and write requirements.json
     intention = meta.get("intention", "")
     requirements = {}
     if api and component_id:
@@ -171,7 +184,7 @@ def write_action_folder(
     if req_json:
         requirements_file = component_dir / "requirements.json"
         requirements_file.write_text(json.dumps(req_json, indent=2))
-
+    
     return {
         "component_id": component_id,
         "type": "action",
@@ -194,19 +207,21 @@ def write_flow_folder(
     meta = component.get("meta", {})
     spec = component.get("spec", {})
     component_id = component.get("id", "")
+    resource = component.get("resource", "flow/v1")
     name = meta.get("name", "unnamed")
     
-    # Create folder
     dir_name = get_unique_dir_name(parent_dir, name, existing_dirs)
     component_dir = parent_dir / dir_name
     component_dir.mkdir(parents=True, exist_ok=True)
     
-    # Track node key -> folder mapping
     if node_key:
         _node_folder_map[node_key] = component_dir
     
     indent = "  " * depth
     print(f"{indent}Writing flow: {dir_name}/")
+    
+    # Write .triform.json
+    write_triform_json(component_dir, component_id, resource, node_key)
     
     # Write readme.md
     readme = spec.get("readme", "")
@@ -215,7 +230,7 @@ def write_flow_folder(
     readme_file = component_dir / "readme.md"
     readme_file.write_text(readme)
     
-    # Write io.json (flow inputs and outputs)
+    # Write io.json
     inputs = spec.get("inputs", {})
     outputs = spec.get("outputs", {})
     if inputs or outputs:
@@ -227,7 +242,7 @@ def write_flow_folder(
         io_file = component_dir / "io.json"
         io_file.write_text(json.dumps(io_data, indent=2))
     
-    # Write nodes.json (node definitions without resolved specs)
+    # Write nodes.json
     nodes = spec.get("nodes", {})
     nodes_clean = {}
     nested_specs = {}
@@ -269,7 +284,6 @@ def write_flow_folder(
     # Process nested components
     nested_existing_dirs = set()
     for nkey, nested_spec in nested_specs.items():
-        # Build full node path for nested components
         full_node_key = f"{node_key}/{nkey}" if node_key else nkey
         write_component_folder(
             nested_spec,
@@ -279,7 +293,7 @@ def write_flow_folder(
             depth + 1,
             full_node_key
         )
-
+    
     return {
         "component_id": component_id,
         "type": "flow",
@@ -301,19 +315,21 @@ def write_agent_folder(
     meta = component.get("meta", {})
     spec = component.get("spec", {})
     component_id = component.get("id", "")
+    resource = component.get("resource", "agent/v1")
     name = meta.get("name", "unnamed")
     
-    # Create folder
     dir_name = get_unique_dir_name(parent_dir, name, existing_dirs)
     component_dir = parent_dir / dir_name
     component_dir.mkdir(parents=True, exist_ok=True)
     
-    # Track node key -> folder mapping
     if node_key:
         _node_folder_map[node_key] = component_dir
     
     indent = "  " * depth
     print(f"{indent}Writing agent: {dir_name}/")
+    
+    # Write .triform.json
+    write_triform_json(component_dir, component_id, resource, node_key)
     
     # Write readme.md
     readme = spec.get("readme", "")
@@ -334,7 +350,7 @@ def write_agent_folder(
         io_file = component_dir / "io.json"
         io_file.write_text(json.dumps(io_data, indent=2))
     
-    # Write nodes.json (tool definitions)
+    # Write nodes.json
     nodes = spec.get("nodes", {})
     nodes_clean = {}
     nested_specs = {}
@@ -382,7 +398,7 @@ def write_agent_folder(
         requirements_file = component_dir / "requirements.json"
         requirements_file.write_text(json.dumps(req_json, indent=2))
     
-    # Process nested components (tools)
+    # Process nested components
     nested_existing_dirs = set()
     for nkey, nested_spec in nested_specs.items():
         full_node_key = f"{node_key}/{nkey}" if node_key else nkey
@@ -394,7 +410,7 @@ def write_agent_folder(
             depth + 1,
             full_node_key
         )
-
+    
     return {
         "component_id": component_id,
         "type": "agent",
@@ -427,24 +443,18 @@ def write_component_folder(
 
 
 def distribute_modifiers(modifiers: dict, target_dir: Path) -> None:
-    """
-    Distribute modifiers to the component folders where they are connected.
-    Modifier keys are in format 'nodeKey/toolNodeKey' which maps to nested components.
-    """
+    """Distribute modifiers to the component folders where they are connected."""
     global _node_folder_map
     
     for modifier_path, modifier_list in modifiers.items():
         if not modifier_list:
             continue
         
-        # Find the folder for this modifier path
         target_folder = None
         
-        # Try exact match first
         if modifier_path in _node_folder_map:
             target_folder = _node_folder_map[modifier_path]
         else:
-            # Try to find parent path match
             parts = modifier_path.split("/")
             for i in range(len(parts), 0, -1):
                 partial_path = "/".join(parts[:i])
@@ -462,7 +472,6 @@ def write_triggers_folder(triggers: dict, target_dir: Path) -> None:
     """Write triggers to separate files in triggers/ folder."""
     has_triggers = False
     
-    # Check if any triggers have meaningful content
     for key in ["endpoints", "chat", "scheduled"]:
         trigger = triggers.get(key, {})
         if trigger and (trigger.get("enabled") or trigger.get("nodes")):
@@ -475,19 +484,16 @@ def write_triggers_folder(triggers: dict, target_dir: Path) -> None:
     triggers_dir = target_dir / "triggers"
     triggers_dir.mkdir(exist_ok=True)
     
-    # Endpoints trigger
     endpoints = triggers.get("endpoints", {})
     if endpoints and (endpoints.get("enabled") or endpoints.get("nodes")):
         endpoints_file = triggers_dir / "endpoints.json"
         endpoints_file.write_text(json.dumps(endpoints, indent=2))
     
-    # Chat trigger
     chat = triggers.get("chat", {})
     if chat and chat.get("enabled"):
         chat_file = triggers_dir / "chat.json"
         chat_file.write_text(json.dumps(chat, indent=2))
     
-    # Scheduled trigger
     scheduled = triggers.get("scheduled", {})
     if scheduled and (scheduled.get("enabled") or scheduled.get("nodes")):
         scheduled_file = triggers_dir / "scheduled.json"
@@ -501,47 +507,18 @@ def pull_project(
     include_org_structure: bool = True
 ) -> Path:
     """
-    Pull a Triform project to local file structure with granular files.
+    Pull a Triform project to local file structure.
 
-    Structure:
-    ProjectName/
-      {project_name}.env          - Environment variables
-      readme.md                   - Project readme
-      requirements.json           - Project requirements + description
-      triggers/
-        endpoints.json            - HTTP endpoint triggers
-        chat.json                 - Chat trigger config
-        scheduled.json            - Scheduled/cron triggers
-      .triform/
-        config.json               - CLI sync config
-        state.json                - Sync state (includes component IDs)
-      ComponentName/              - Each component in its own folder
-        {name}.py                 - Source code (actions only)
-        readme.md                 - Documentation
-        requirements.json         - Requirements + description
-        io.json                   - Inputs and outputs
-        nodes.json                - Node definitions (flows/agents)
-        prompts.json              - Prompts (agents only)
-        settings.json             - Model settings (agents only)
-        pip_requirements.txt      - Pip dependencies (actions only)
-        modifiers.json            - OAuth/storage modifiers (if connected)
-        NestedComponent/          - Nested components as subfolders
+    Each component folder contains a .triform.json file for sync tracking:
+    {"id": "component-uuid", "type": "action|flow|agent"}
 
-    Args:
-        project_id: The project ID to pull
-        target_dir: Target directory (defaults to Triform/OrgName/ProjectName)
-        api: Optional API client instance
-        include_org_structure: If True, creates Triform/Org/Project structure
-
-    Returns:
-        Path to the created project directory
+    This file should be committed to git for CI/CD compatibility.
     """
     global _node_folder_map
-    _node_folder_map = {}  # Reset mapping
+    _node_folder_map = {}
     
     api = api or TriformAPI()
 
-    # Fetch the project
     print(f"Fetching project {project_id}...")
     project = api.get_project(project_id)
 
@@ -551,7 +528,6 @@ def pull_project(
     project_name = project["meta"]["name"]
     safe_project_name = sanitize_name(project_name)
 
-    # Get organization info
     org_name = "default"
     org_id = None
     try:
@@ -570,7 +546,6 @@ def pull_project(
     except APIError:
         pass
 
-    # Determine target directory
     if target_dir is None:
         if include_org_structure:
             target_dir = Path.cwd() / "Triform" / sanitize_name(org_name) / safe_project_name
@@ -613,7 +588,7 @@ def pull_project(
         requirements_file = target_dir / "requirements.json"
         requirements_file.write_text(json.dumps(req_json, indent=2))
 
-    # Write triggers/ folder
+    # Write triggers/
     triggers = spec.get("triggers", {})
     if triggers:
         write_triggers_folder(triggers, target_dir)
@@ -624,7 +599,7 @@ def pull_project(
     components_state = {}
     existing_dirs: set = set()
 
-    # Process each top-level node (component)
+    # Process components
     for node_key, node in spec.get("nodes", {}).items():
         component_id = node.get("component_id")
         if not component_id:
@@ -651,7 +626,7 @@ def pull_project(
         if state_entry:
             components_state[node_key] = state_entry
 
-    # Distribute modifiers to component folders
+    # Distribute modifiers
     modifiers = spec.get("modifiers", {})
     if modifiers:
         distribute_modifiers(modifiers, target_dir)
@@ -665,7 +640,7 @@ def pull_project(
     )
     project_config.save(target_dir)
 
-    # Save sync state (includes component IDs for push)
+    # Save sync state
     sync_state = SyncState(
         components=components_state,
         last_sync=datetime.utcnow().isoformat()
@@ -674,5 +649,6 @@ def pull_project(
 
     print(f"\nProject pulled successfully to {target_dir}")
     print(f"  - {len(components_state)} top-level components")
+    print(f"  - .triform.json files created for each component (commit these to git)")
 
     return target_dir
