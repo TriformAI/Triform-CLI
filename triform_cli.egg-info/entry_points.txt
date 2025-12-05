@@ -1,0 +1,2 @@
+[console_scripts]
+triform = triform_cli.cli:main
